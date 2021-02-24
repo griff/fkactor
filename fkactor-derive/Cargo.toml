@@ -1,0 +1,24 @@
+[package]
+name = "fkactor-derive"
+version = "0.1.0"
+authors = ["Brian Olsen <brian@maven-group.org>", "Druid authors"]
+license = "Apache-2.0"
+repository = "https://github.com/griff/fkactor"
+edition = "2018"
+
+[lib]
+proc-macro = true
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--cfg", "docsrs"]
+default-target = "x86_64-pc-windows-msvc"
+
+[dependencies]
+syn = {version = "~1.0.29", features = [ "extra-traits" ] }
+quote = "1.0.6"
+proc-macro2 = "1.0.17"
+
+[dev-dependencies]
+fkactor = { version = "0.1.0", path = "../fkactor" }
+
+float-cmp = { version = "0.8.0", features = ["std"], default-features = false }
