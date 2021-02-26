@@ -4,7 +4,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use futures::stream::Stream;
-use futures_util::lock::Mutex;
+use futures::lock::Mutex;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 

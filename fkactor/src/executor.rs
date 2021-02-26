@@ -7,7 +7,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use futures::sink::Sink;
 use futures::stream::{Stream, StreamExt};
-use futures_util::lock::Mutex;
+use futures::lock::Mutex;
 use tokio::task::{spawn, JoinHandle};
 
 use super::StdError;

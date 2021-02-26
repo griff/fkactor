@@ -5,7 +5,7 @@ use std::ops::DerefMut;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use futures_util::lock::Mutex;
+use futures::lock::Mutex;
 use serde::{Deserialize, Serialize};
 
 use super::{Context, Handler, Status, StatusResult, TypedAid, UntypedAid};

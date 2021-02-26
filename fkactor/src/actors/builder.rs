@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use futures::channel::mpsc::{self, Receiver};
 use futures::channel::oneshot;
+use futures::lock::Mutex;
 
 use crate::system::ActorSystem;
 use super::{ActorStreamBuilder, Fanout, Handler, TypedAid};
@@ -88,7 +89,7 @@ impl ActorBuilder {
         ActorStreamBuilder { system: self.system, aid, stream }
     }
 
-    pub async fn mutex<T, S, L, U>(self, data: Arc<futures_util::lock::Mutex<S>>, lens: L) -> TypedAid<T>
+    pub async fn mutex<T, S, L, U>(self, data: Arc<Mutex<S>>, lens: L) -> TypedAid<T>
     	where U: ChangeUpdater<T> + Send + Unpin + 'static,
 	    	  T: fmt::Debug + Send + Unpin + 'static,
 		      S: Send + 'static,
@@ -101,7 +102,7 @@ impl ActorBuilder {
         self.with(handler).await
     }
 
-    pub async fn mutex_forward<T, S, L, U, F>(self, data: Arc<futures_util::lock::Mutex<S>>, lens: L, fwd: TypedAid<F>) -> TypedAid<T>
+    pub async fn mutex_forward<T, S, L, U, F>(self, data: Arc<Mutex<S>>, lens: L, fwd: TypedAid<F>) -> TypedAid<T>
     	where U: for<'c> ChangeUpdater<&'c T> + Send + Unpin + 'static,
 	    	  T: fmt::Debug + Send + Unpin + 'static,
 		      S: Send + 'static,

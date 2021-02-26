@@ -8,9 +8,9 @@ use std::sync::Arc;
 
 use futures::channel::oneshot;
 use futures::channel::mpsc;
-use futures_util::future::{ready, TryFutureExt};
-use futures_util::stream::StreamExt;
-use futures_util::sink::SinkExt;
+use futures::future::{ready, TryFutureExt};
+use futures::stream::StreamExt;
+use futures::sink::SinkExt;
 use tokio::spawn;
 
 use super::{Change, Changed, Context, Handler, Status, StatusResult, TypedAid, UntypedAid};
