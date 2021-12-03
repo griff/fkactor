@@ -1,0 +1,11 @@
+[package]
+name = "lens"
+version = "0.1.0"
+authors = ["Brian Olsen <brian@maven-group.org>", "Raph Levien <raph.levien@gmail.com>", "Robert Simmons Jr. MSc.", "Khionu Sybiern <dev@khionu.net>"]
+edition = "2018"
+license = "Apache-2.0"
+repository = "https://github.com/griff/fkactor/lens"
+
+[dependencies]
+lens-derive = { version = "0.1.0", path = "../lens-derive" }
+futures = "^0.3.1"

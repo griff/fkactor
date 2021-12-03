@@ -6,6 +6,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use log::debug;
 use uuid::Uuid;
 
 use super::{Aid, UntypedAid};
@@ -78,8 +79,8 @@ impl<M> TypedAid<M>
 {
     pub(crate) fn new(name: Option<String>, system_uuid: Uuid, channel_size: u16) -> (TypedAid<M>, ActorReceiver<M>)
     {
-        let (sender, r) = channel(channel_size);
         let aid = Aid::new(name, system_uuid);
+        let (sender, r) = channel(channel_size, aid.clone());
 
         (TypedAid { aid, sender: Box::new(sender) }, r)
     }
@@ -200,12 +201,14 @@ impl<M1, M2> Handler<M2> for TypedAid<M1>
         Ok(Status::Done)
     }
 
-    async fn handle_shutdown(&mut self, _context: &mut Context) -> StatusResult {
+    async fn handle_shutdown(&mut self, context: &mut Context) -> StatusResult {
+        debug!("Shutdown {} sent to {}", self.as_ref(), context.aid.as_ref());
         self.stop();
         Ok(Status::Stop)
     }
 
-    async fn handle_stopped(&mut self, _context: &mut Context, _aid: UntypedAid, _error: Option<Arc<String>>) -> StatusResult {
+    async fn handle_stopped(&mut self, context: &mut Context, aid: UntypedAid, _error: Option<Arc<String>>) -> StatusResult {
+        debug!("Stopped {} sent to {}", aid.as_ref(), context.aid.as_ref());
         Ok(Status::Stop)
     }
 }

@@ -8,7 +8,10 @@ use async_trait::async_trait;
 use futures::sink::Sink;
 use futures::stream::{Stream, StreamExt};
 use futures::lock::Mutex;
+use log::{debug, error, trace};
 use tokio::task::{spawn, JoinHandle};
+
+use crate::actors::AidError;
 
 use super::StdError;
 use super::actors::{UntypedAid, Context, Handler, Status, StatusResult};
@@ -28,8 +31,10 @@ async fn run_actor<M, St, H>(mut ctx: Context, stream: St, handler: H)
     ctx.system.notify_started(ctx.aid.clone()).await;
     let run = RunHandler::Ready(ctx.clone(), handler);
     let error = if let Err(RunHandlerError::Error(err)) = stream.map(Ok).forward(run).await {
+        debug!("Actor {} error: {:?}", ctx.aid.as_ref(), err);
         Some(Arc::new(err.to_string()))
     } else {
+        debug!("Actor {} completed", ctx.aid.as_ref());
         None
     };
     ctx.system.notify_stopped(ctx.aid, error).await;
@@ -66,10 +71,12 @@ impl ActorManager {
 impl Handler<SystemManage> for ActorManager {
     async fn handle_message(&mut self, _context: &mut Context, msg: SystemManage) -> StatusResult {
         match msg {
-            SystemManage::RegisterMonitor(aid, sender) => {
-                self.monitored.entry(aid).or_default().push(sender);
+            SystemManage::RegisterMonitor(monitoring, monitored) => {
+                trace!("Monitor {} for {}", monitored.as_ref(), monitoring.as_ref());
+                self.monitored.entry(monitored).or_default().push(monitoring);
             }
             SystemManage::Started(aid, sender) => {
+                trace!("Started {}", aid.as_ref());
                 let mut map = self.actors.lock().await;
                 map.insert(aid, sender);
             },
@@ -77,22 +84,28 @@ impl Handler<SystemManage> for ActorManager {
         Ok(Status::Done)
     }
     async fn handle_shutdown(&mut self, _context: &mut Context) -> StatusResult {
+        trace!("Handle shutdown");
         for (aid, senders) in self.monitored.drain() {
             for mut sender in senders {
                 sender.stopped(aid.clone(), None).await.unwrap_or_else(|err| {
-                    eprintln!("Could not notfiy of stopped {:?}", err);
+                    if AidError::ActorAlreadyStopped != err {
+                        error!("Could not notfiy {} of {} stopped: {:?}", sender.as_ref(), aid.as_ref(), err);
+                    }
                 });
             }
         }
         Ok(Status::Done)
     }
     async fn handle_stopped(&mut self, _context: &mut Context, aid: UntypedAid, error: Option<Arc<String>>) -> StatusResult {
+        trace!("Handle stopped {}", aid.as_ref());
         let mut map = self.actors.lock().await;
         map.remove(&aid);
         if let Some(senders) = self.monitored.get_mut(&aid) {
             for sender in senders.iter_mut() {
                 sender.stopped(aid.clone(), error.clone()).await.unwrap_or_else(|err| {
-                    eprintln!("Could not notfiy of stopped {:?}", err);
+                    if AidError::ActorAlreadyStopped != err {
+                        error!("Could not notfiy {} of {} stopped: {:?}", sender.as_ref(), aid.as_ref(), err);
+                    }
                 });
             }
         }
@@ -102,6 +115,7 @@ impl Handler<SystemManage> for ActorManager {
 }
 
 
+#[derive(Debug)]
 pub enum RunHandlerError {
     Stopped,
     Error(StdError),
@@ -144,9 +158,11 @@ impl<'h, H,M> Sink<Message<M>> for RunHandler<H>
             RunHandler::Processing(mut fut) => {
                 match fut.as_mut().poll(cx) {
                     Poll::Ready(Err(err)) => {
+                        debug!("Aid error {:?}", err);
                         Poll::Ready(Err(RunHandlerError::Error(err)))
                     },
-                    Poll::Ready(Ok((.., Status::Stop))) => {
+                    Poll::Ready(Ok((ctx, _, Status::Stop))) => {
+                        debug!("Handler returned stop  {}", ctx.aid.as_ref());
                         Poll::Ready(Err(RunHandlerError::Stopped))
                     },
                     Poll::Ready(Ok((ctx, h, Status::Done))) => {
@@ -165,6 +181,15 @@ impl<'h, H,M> Sink<Message<M>> for RunHandler<H>
     fn start_send(mut self: Pin<&mut Self>, item: Message<M>) -> Result<(), Self::Error>
     {
         if let RunHandler::Ready(mut ctx, mut h) = self.take() {
+            match &item {
+                Message::System(crate::system::SystemMsg::Stop) => {
+                    trace!("Stopping {}", ctx.aid.as_ref());
+                },
+                Message::System(crate::system::SystemMsg::Stopped { aid, error }) => {
+                    trace!("Stopped {} ({:?}) sent to {}", aid.as_ref(), error, ctx.aid.as_ref());
+                },
+                _ => {},
+            }
             let fut = async move {
                 match h.handle(&mut ctx, item).await {
                     Ok(s) => Ok((ctx, h, s)),
@@ -186,6 +211,7 @@ impl<'h, H,M> Sink<Message<M>> for RunHandler<H>
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Result<(), Self::Error>>
     {
         let ret = self.as_mut().poll_ready(cx);
+        trace!("Poll close {:?}", ret);
         match ret {
             Poll::Ready(Ok(())) => {
                 *self = RunHandler::Invalid;
@@ -252,6 +278,10 @@ pub struct Executor {
 }
 
 impl Executor {
+    pub fn start_sync(&mut self) {
+        self.inner.try_lock().expect("Unlocked").start()
+    }
+
     pub async fn start(&mut self) {
         self.inner.lock().await.start()
     }

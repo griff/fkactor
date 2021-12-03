@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use futures::stream::Stream;
 use futures::lock::Mutex;
+use log::error;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -171,7 +172,7 @@ pub struct ActorSystem {
 }
 
 impl ActorSystem {
-    pub async fn create(config: ActorSystemConfig) -> ActorSystem {
+    pub fn create(config: ActorSystemConfig) -> ActorSystem {
         let uuid = Uuid::new_v4();
         let (monitor, stream) = TypedAid::new(Some("System".into()), uuid.clone(), 500);
         let mut system = ActorSystem {
@@ -189,13 +190,20 @@ impl ActorSystem {
         };
         system.executor.run_sync(ctx, stream, handler);
         if system.config().start_on_launch {
-            system.start().await;
+            system.executor.start_sync();
         }
         system
     }
 
     pub async fn start(&mut self) {
         self.executor.start().await
+    }
+
+    pub async fn shutdown(&mut self) {
+        let actors = self.data.actors.lock().await.clone();
+        for (mut aid, _) in actors.into_iter() {
+            aid.stop();
+        }        
     }
 
     pub fn builder(&self) -> ActorBuilder {
@@ -207,7 +215,7 @@ impl ActorSystem {
             return;
         }
         self.monitor.send(SystemManage::Started(aid.clone(), aid.clone())).await.unwrap_or_else(|err| {
-            eprintln!("Failed to notify started status {:?}", err);
+            error!("Failed to notify started status {:?}", err);
         });
     }
 
@@ -216,7 +224,7 @@ impl ActorSystem {
             return;
         }
         self.monitor.stopped(aid, error).await.unwrap_or_else(|err| {
-            eprintln!("Failed to notify stopped status {:?}", err);
+            error!("Failed to notify stopped status {:?}", err);
         });
     }
 
@@ -226,7 +234,7 @@ impl ActorSystem {
                M: Send + 'static,
     {
         aid.start().await.unwrap_or_else(|err| {
-            eprintln!("Failed to send start message {:?}", err);
+            error!("Failed to send start message {:?}", err);
         });
         let ctx = Context {
             system: self.clone(),
@@ -248,7 +256,7 @@ impl ActorSystem {
               M2: Into<UntypedAid>,
     {
         self.monitor.send(SystemManage::RegisterMonitor(monitoring.into(), monitored.into())).await.unwrap_or_else(|err| {
-            eprintln!("Could not monitor Aid {:?}", err);
+            error!("Could not monitor Aid {:?}", err);
         });
     }
 }

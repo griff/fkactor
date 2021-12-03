@@ -2,19 +2,15 @@ use std::fmt;
 use std::future::Future;
 use std::hash;
 use std::io;
-use std::marker::PhantomData;
-use std::sync::Arc;
 
 use futures::channel::mpsc::{self, Receiver};
 use futures::channel::oneshot;
-use futures::lock::Mutex;
 
 use crate::system::ActorSystem;
-use super::{ActorStreamBuilder, Fanout, Handler, TypedAid};
+use super::{ActorStreamBuilder, Fanout, Handler, TypedAid, Process};
 use super::fanout::{FanoutHandler, FanoutMessage};
-use super::change::{ArcMutex, ArcMutexFwd};
+use super::change::Change;
 use super::aid::ActorReceiver;
-use super::{Change, ChangeUpdater, Process};
 
 pub struct ActorBuilder {
     pub channel_size: Option<u16>,
@@ -67,9 +63,15 @@ impl ActorBuilder {
     pub async fn fanout<M>(self) -> (TypedAid<M>, Fanout<M>)
         where M: fmt::Debug + Clone + Send + Sync + Unpin + 'static,
     {
+        let mut builder2 = self.system.builder();
+        if let Some(name) = &self.name {
+            builder2 = builder2.name(&format!("{}-redirect", name));
+        }
         let aid = self.with(FanoutHandler::default()).await;
         let fanout = Fanout::new(aid.clone());
-        (aid.map(|m| FanoutMessage::Message(m) ), fanout)
+        let sender = aid.map(|m| FanoutMessage::Message(m));
+        let redirect = builder2.with(sender).await;
+        ( redirect, fanout )
     }
 
     pub async fn process<F, I, R, M>(self, recipient: TypedAid<M>, start: F) -> TypedAid<Change<I, ()>>
@@ -88,32 +90,7 @@ impl ActorBuilder {
         let (aid, stream) = TypedAid::new(self.name, self.system.uuid(), channel_size);
         ActorStreamBuilder { system: self.system, aid, stream }
     }
+    /*
 
-    pub async fn mutex<T, S, L, U>(self, data: Arc<Mutex<S>>, lens: L) -> TypedAid<T>
-    	where U: ChangeUpdater<T> + Send + Unpin + 'static,
-	    	  T: fmt::Debug + Send + Unpin + 'static,
-		      S: Send + 'static,
-		      L: crate::Lens<S, U> + Send + Unpin + 'static,
-    {
-        let handler = ArcMutex {
-            data, lens,
-            phantom: PhantomData,        
-        };
-        self.with(handler).await
-    }
-
-    pub async fn mutex_forward<T, S, L, U, F>(self, data: Arc<Mutex<S>>, lens: L, fwd: TypedAid<F>) -> TypedAid<T>
-    	where U: for<'c> ChangeUpdater<&'c T> + Send + Unpin + 'static,
-	    	  T: fmt::Debug + Send + Unpin + 'static,
-		      S: Send + 'static,
-              L: crate::Lens<S, U> + Send + Unpin + 'static,
-              T: Into<F>,
-              F: fmt::Debug + Send + Unpin + 'static,
-    {
-        let handler = ArcMutexFwd {
-            data, lens, fwd,
-            phantom: PhantomData,        
-        };
-        self.with(handler).await
-    }
+     */
 }

@@ -11,6 +11,7 @@ use futures::channel::mpsc;
 use futures::future::{ready, TryFutureExt};
 use futures::stream::StreamExt;
 use futures::sink::SinkExt;
+use log::{error, trace};
 use tokio::spawn;
 
 use super::{Change, Changed, Context, Handler, Status, StatusResult, TypedAid, UntypedAid};
@@ -36,7 +37,7 @@ impl<A, I, F, R> Process<F, A, I, R>
         let (spawner, receiver) = mpsc::channel(10);
         spawn(receiver.for_each(|f: R| {
             spawn(f
-                .inspect_err(|err| eprintln!("update id error {:?}", err))
+                .inspect_err(|err| error!("update id error {:?}", err))
                 .unwrap_or_else(|_| ()));
             ready(())
         }));
@@ -136,6 +137,7 @@ where R: Future<Output=io::Result<()>> + Send + 'static,
         where 'this: 'async_trait,
             'ctx: 'async_trait,
     {
+        trace!("Process {:?} handle_start", self.recipient.as_ref());
         Box::pin(async move {
             let monitored = self.recipient.clone().untyped();
             context.system.monitor(context.aid.clone(), monitored).await;
@@ -147,6 +149,7 @@ where R: Future<Output=io::Result<()>> + Send + 'static,
         where 'this: 'async_trait,
             'ctx: 'async_trait,
     {
+        trace!("Process {:?} handle_shutdown", self.recipient.as_ref());
         Box::pin(async move {
             for (_key, mut counter) in self.counts.drain() {
                 if let Some(e) = counter.stopper.take() {
@@ -161,6 +164,7 @@ where R: Future<Output=io::Result<()>> + Send + 'static,
         where 'this: 'async_trait,
             'ctx: 'async_trait,
     {
+        trace!("Process {:?} handle_stopped {:?}", aid.as_ref(), self.recipient.as_ref());
         Box::pin(async move {
             if self.recipient == aid  {
                 Ok(Status::Stop)
@@ -169,5 +173,4 @@ where R: Future<Output=io::Result<()>> + Send + 'static,
             }
         })
     }
-
 }

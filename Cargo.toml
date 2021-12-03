@@ -1,9 +1,13 @@
 [workspace]
 members = [
     "fkactor",
-    "fkactor-derive",
+    "lens-derive",
+    "lens",
+    "fkactor-change",
 ]
 default-members = [
     "fkactor",
-    "fkactor-derive",
+    "lens-derive",
+    "lens",
+    "fkactor-change",
 ]

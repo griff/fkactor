@@ -16,6 +16,11 @@ use std::marker::PhantomData;
 use std::ops;
 use std::sync::Arc;
 
+// Allows to use macros from fkactor_derive in this crate
+extern crate self as lens;
+pub use lens_derive::Lens;
+
+
 /// A lens is a datatype that gives access to a part of a larger
 /// data structure.
 ///

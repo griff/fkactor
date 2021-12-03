@@ -1,9 +1,9 @@
 [package]
-name = "fkactor-derive"
+name = "lens-derive"
 version = "0.1.0"
 authors = ["Brian Olsen <brian@maven-group.org>", "Druid authors"]
 license = "Apache-2.0"
-repository = "https://github.com/griff/fkactor"
+repository = "https://github.com/griff/fkactor/lens-derive"
 edition = "2018"
 
 [lib]
@@ -19,6 +19,6 @@ quote = "1.0.6"
 proc-macro2 = "1.0.17"
 
 [dev-dependencies]
-fkactor = { version = "0.1.0", path = "../fkactor" }
+lens = { version = "0.1.0", path = "../lens" }
 
 float-cmp = { version = "0.8.0", features = ["std"], default-features = false }

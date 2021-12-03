@@ -14,7 +14,7 @@ mod stream_builder;
 
 pub use self::aid::{Aid, TypedAid, UntypedAid};
 pub use self::builder::ActorBuilder;
-pub use self::change::{Change, Changed, ChangeDB, ChangeUpdater, EventedDB};
+pub use self::change::{Change, Changed};
 pub use self::fanout::{Fanout, FanoutAid, FanoutMessage};
 pub use self::handler::Handler;
 pub use self::process::Process;

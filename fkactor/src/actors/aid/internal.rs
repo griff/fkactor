@@ -5,17 +5,22 @@ use std::pin::Pin;
 
 use async_trait::async_trait;
 use futures::sink::SinkExt;
+use futures::stream::FusedStream;
 use futures::stream::Stream;
 use futures::channel::mpsc::{self, Receiver, Sender};
+use log::trace;
 
 use crate::actors::AidError;
 use crate::system::{Message, SystemMsg};
 
+use super::Aid;
 
-pub(crate) fn channel<M: 'static>(channel_size: u16) -> (ActorSender<M>, ActorReceiver<M>) {
+
+pub(crate) fn channel<M: 'static>(channel_size: u16, aid: Aid) -> (ActorSender<M>, ActorReceiver<M>) {
+    let (system, rs) = mpsc::channel(channel_size as usize);
     let (sender, r) = mpsc::channel(channel_size as usize);
-    (ActorSender { sender },
-     ActorReceiver { stream: Some(r) })
+    (ActorSender { aid: aid.clone(), system, sender },
+     ActorReceiver { aid: aid.clone(), stream: Some(r), system: Some(rs), ready: None, completed: false })
 }
 
 #[async_trait]
@@ -30,13 +35,16 @@ pub trait SystemSender: fmt::Debug + Send
 }
 
 #[async_trait]
-impl<M> SystemSender for Sender<Message<M>>
-    where M: fmt::Debug + Send + 'static
+impl SystemSender for Sender<SystemMsg>
 {
     async fn send_system(&mut self, msg: SystemMsg) -> Result<(), AidError> {
-        if let Err(err) = self.send(Message::System(msg)).await {
-            if err.is_disconnected() {
-                return Err(AidError::ActorAlreadyStopped);
+        if let SystemMsg::Stop = msg {
+            self.stop();
+        } else {
+            if let Err(err) = self.send(msg).await {
+                if err.is_disconnected() {
+                    return Err(AidError::ActorAlreadyStopped);
+                }
             }
         }
         Ok(())
@@ -183,21 +191,16 @@ impl<M> Clone for Box<dyn MessageSender<M> + Sync>
 
 #[derive(Debug)]
 pub struct ActorSender<M> {
-    sender: Sender<Message<M>>,
+    aid: Aid,
+    system: Sender<SystemMsg>,
+    sender: Sender<M>,
 }
-
-/*
-impl<M> fmt::Debug for ActorSender<M> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        //fmt::Debug::fmt(&self.sender, f)
-        write!(f, "Muh!")
-    }
-}
-*/
 
 impl<M> Clone for ActorSender<M> {
     fn clone(&self) -> Self {
         ActorSender {
+            aid: self.aid.clone(),
+            system: self.system.clone(),
             sender: self.sender.clone(),
         }
     }
@@ -208,7 +211,7 @@ impl<M> MessageSender<M> for ActorSender<M>
     where M: fmt::Debug + Send + 'static,
 {
     async fn send_msg(&mut self, msg: M) -> Result<(), AidError> {
-        if let Err(err) = self.sender.send(Message::Actual(msg)).await {
+        if let Err(err) = self.sender.send(msg).await {
             if err.is_disconnected() {
                 return Err(AidError::ActorAlreadyStopped);
             }
@@ -216,15 +219,21 @@ impl<M> MessageSender<M> for ActorSender<M>
         Ok(())
     } 
     async fn send_system(&mut self, msg: SystemMsg) -> Result<(), AidError> {
-        if let Err(err) = self.sender.send(Message::System(msg)).await {
-            if err.is_disconnected() {
-                return Err(AidError::ActorAlreadyStopped);
+        if let SystemMsg::Stop = msg {
+            self.stop();
+        } else {
+            if let Err(err) = self.system.send(msg).await {
+                trace!("send_system {}: {:?}", self.aid, err.to_string());
+                if err.is_disconnected() {
+                    return Err(AidError::ActorAlreadyStopped);
+                }
             }
         }
         Ok(())
     }
     fn stop(&mut self) {
-        self.sender.close_channel()
+        self.system.close_channel();
+        self.sender.close_channel();
     }
     fn __private_clone_box__(&self) -> Box<dyn MessageSender<M> + Sync> {
         Box::new(self.clone())
@@ -232,43 +241,17 @@ impl<M> MessageSender<M> for ActorSender<M>
     fn __private_untyped__(&self) -> UntypedActorSender {
         UntypedActorSender {
             type_id: TypeId::of::<M>(),
-            sender: Box::new(self.sender.clone()),
+            sender: Box::new(self.system.clone()),
         }
     }
 }
-/*
-impl<M> ActorSender<M>
-    where M: Send + 'static
-{
-    pub async fn send_new(&mut self, msg: M) -> Result<(), AidError> {
-        self.send(Box::new(msg)).await
-    }
-    pub async fn send(&mut self, msg: Box<M>) -> Result<(), AidError> {
-        if let Err(err) = self.untyped.sender.send(Message::Actual(msg as Box<dyn Any + Send>)).await {
-            if err.is_disconnected() {
-                return Err(AidError::ActorAlreadyStopped);
-            }
-        }
-        Ok(())
-    } 
-
-    pub async fn send_system(&mut self, msg: SystemMsg) -> Result<(), AidError> {
-        if let Err(err) = self.untyped.sender.send(Message::System(msg)).await {
-            if err.is_disconnected() {
-                return Err(AidError::ActorAlreadyStopped);
-            }
-        }
-        Ok(())
-    }
-
-    pub fn stop(&mut self) {
-        self.untyped.sender.close_channel()
-    }
-}
-*/
 
 pub struct ActorReceiver<M> {
-    stream: Option<Receiver<Message<M>>>,
+    aid: Aid,
+    stream: Option<Receiver<M>>,
+    system: Option<Receiver<SystemMsg>>,
+    ready: Option<Message<M>>,
+    completed: bool,
 }
 
 impl<M> Stream for ActorReceiver<M>
@@ -278,19 +261,116 @@ impl<M> Stream for ActorReceiver<M>
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Option<Self::Item>>
     {
-        match self.stream.take() {
-            Some(mut stream) => {
-                match Pin::new(&mut stream).poll_next(cx) {
-                    msg @ Poll::Ready(Some(Message::System(SystemMsg::Stop))) => {
-                        msg
-                    },
-                    other => {
-                        self.stream = Some(stream);
-                        other
-                    },
+        loop {
+            if let Some (msg) = self.ready.take() {
+                return Poll::Ready(Some(msg));
+            }
+            match (self.stream.take(), self.system.take()) {
+                (Some(mut stream), Some(mut system)) => {
+                    match (Pin::new(&mut stream).poll_next(cx), Pin::new(&mut system).poll_next(cx)) {
+                        (Poll::Ready(None), Poll::Ready(None)) => {
+                            trace!("{} Both none {} {}", self.aid, system.is_terminated(), stream.is_terminated());
+                            return Poll::Ready(Some(Message::System(SystemMsg::Stop)));
+                        },
+                        (Poll::Ready(None), Poll::Ready(Some(msg))) => {
+                            system.close();
+                            trace!("{} Stream none, system msg {} {}", self.aid, system.is_terminated(), stream.is_terminated());
+                            self.system = Some(system);
+                            return Poll::Ready(Some(Message::System(msg)));
+                        },
+                        (Poll::Ready(None), Poll::Pending) => {
+                            system.close();
+                            trace!("{} Stream none, system pending {} {}", self.aid, system.is_terminated(), stream.is_terminated());
+                            self.system = Some(system);
+                        },
+                        (Poll::Ready(Some(item)), Poll::Ready(None)) => {
+                            stream.close();
+                            trace!("{} Stream some, System none {} {}", self.aid, system.is_terminated(), stream.is_terminated());
+                            self.stream = Some(stream);
+                            return Poll::Ready(Some(Message::Actual(item)));
+                        },
+                        (Poll::Ready(Some(item)), Poll::Ready(Some(msg))) => {
+                            trace!("{} Stream some, System some {} {}", self.aid, system.is_terminated(), stream.is_terminated());
+                            self.stream = Some(stream);
+                            self.system = Some(system);
+                            self.ready = Some(Message::System(msg));
+                            return Poll::Ready(Some(Message::Actual(item)));
+                        },
+                        (Poll::Ready(Some(item)), Poll::Pending) => {
+                            trace!("{} Stream some, System pending {} {}", self.aid, system.is_terminated(), stream.is_terminated());
+                            self.stream = Some(stream);
+                            self.system = Some(system);
+                            return Poll::Ready(Some(Message::Actual(item)));
+                        },
+                        (Poll::Pending, Poll::Ready(None)) => {
+                            stream.close();
+                            trace!("{} Stream pending, System none {} {}", self.aid, system.is_terminated(), stream.is_terminated());
+                            self.stream = Some(stream);
+                        },
+                        (Poll::Pending, Poll::Ready(Some(msg))) => {
+                            trace!("{} Stream pending, System some {} {} {:?}", self.aid, system.is_terminated(), stream.is_terminated(), msg);
+                            self.stream = Some(stream);
+                            self.system = Some(system);
+                            return Poll::Ready(Some(Message::System(msg)));
+                        },
+                        (Poll::Pending, Poll::Pending) => {
+                            trace!("{} Both pending {} {}", self.aid, system.is_terminated(), stream.is_terminated());
+                            self.system = Some(system);
+                            self.stream = Some(stream);
+                            return Poll::Pending;
+                        },
+                    }
+                },
+                (Some(mut stream), None) => {
+                    match Pin::new(&mut stream).poll_next(cx) {
+                        Poll::Pending => {
+                            trace!("{} Stream pending, system done", self.aid);
+                            self.stream = Some(stream);
+                            return Poll::Pending;
+                        },
+                        Poll::Ready(Some(msg)) => {
+                            trace!("{} Stream some, system done", self.aid);
+                            self.stream = Some(stream);
+                            return Poll::Ready(Some(Message::Actual(msg)));
+                        },
+                        Poll::Ready(None) => {
+                            trace!("{} Stream none, system done", self.aid);
+                            return Poll::Ready(Some(Message::System(SystemMsg::Stop)));
+                        }
+                    }
+                },
+                (None, Some(mut system)) => {
+                    match Pin::new(&mut system).poll_next(cx) {
+                        Poll::Pending => {
+                            trace!("{} Stream done, system pending", self.aid);
+                            self.system = Some(system);
+                            return Poll::Pending;
+                        },
+                        Poll::Ready(Some(msg)) => {
+                            trace!("{} Stream done, system some", self.aid);
+                            self.system = Some(system);
+                            return Poll::Ready(Some(Message::System(msg)));
+                        },
+                        Poll::Ready(None) => {
+                            trace!("{} Stream done, system none", self.aid);
+                            return Poll::Ready(Some(Message::System(SystemMsg::Stop)));
+                        }
+                    }
+                },
+                (None, None) => {
+                    trace!("{} No stream", self.aid);
+                    self.completed = true;
+                    return Poll::Ready(None);
                 }
-            },
-            None => Poll::Ready(None)
+            }
         }
+    }
+}
+
+impl<M> FusedStream for ActorReceiver<M>
+    where M: Unpin + 'static
+{
+    fn is_terminated(&self) -> bool {
+        self.completed && self.stream.is_none() && self.system.is_none()
     }
 }

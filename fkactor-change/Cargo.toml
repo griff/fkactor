@@ -1,16 +1,14 @@
 [package]
-name = "fkactor"
+name = "fkactor-change"
 version = "0.1.0"
 authors = ["Brian Olsen <brian@maven-group.org>"]
 edition = "2018"
 license = "Apache-2.0"
-repository = "https://github.com/griff/fkactor/fkactor"
+repository = "https://github.com/griff/fkactor/fkactor-change"
 
 [dependencies]
 async-trait = "^0.1.30"
+fkactor = { version = "0.1.0", path = "../fkactor" }
 futures = "^0.3.1"
-log = "0.4"
+lens = { version = "0.1.0", path = "../lens" }
 serde = { version = "~1.0.92", features = ["derive", "rc"] }
-thiserror = "1.0"
-tokio = { version = "1.6.0", default-features = false, features = ["full"] }
-uuid = { version = "0.8", features = ["serde", "v4"] }

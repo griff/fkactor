@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use futures::sink::SinkExt;
 use futures::channel::mpsc::Sender;
 use futures::channel::oneshot;
+use log::{error, trace};
 
 
 use super::{Context, Status, StatusResult, UntypedAid};
@@ -17,6 +18,7 @@ pub trait Handler<T: Send + 'static> {
         Ok(Status::Done)
     }
     async fn handle_shutdown(&mut self, context: &mut Context) -> StatusResult {
+        trace!("Default handle_shutdown {:?}", context.aid.as_ref());
         Ok(Status::Stop)
     }
     async fn handle_stopped(&mut self, context: &mut Context, aid: UntypedAid, error: Option<Arc<String>>) -> StatusResult {
@@ -89,7 +91,7 @@ impl<M> Handler<M> for Option<oneshot::Sender<M>>
     async fn handle_message(&mut self, _: &mut Context, msg: M) -> StatusResult
     {
         if let Some(sender) = self.take() {
-            sender.send(msg).unwrap_or_else(|_| eprintln!("Receiver already closed") );
+            sender.send(msg).unwrap_or_else(|_| error!("Receiver already closed") );
         }
         Ok(Status::Stop)
     }
